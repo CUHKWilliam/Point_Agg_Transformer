@@ -16,8 +16,8 @@ DETR:
   dec_nhead: 4
 
   n_downsampling: 50000
-  n_decode_point: 2048
-  n_query_points: 128
+  n_decode_point: 512
+  n_query_points: 64
 
   filter_biases_wd: False
   weight_decay: 0.1
@@ -28,7 +28,7 @@ DETR:
   lr_scheduler: cosine
   
 DATA:
-  data_root: data
+  data_root: ../../data/geoformer/data/
   dataset: scannetv2
 
   classes: 13
@@ -36,7 +36,7 @@ DATA:
 
   input_channel: 3
   scale: 50   # voxel_size = 1 / scale, scale 50(2cm)
-  batch_size: 16
+  batch_size: 2
   full_scale: [128, 512]
   full_scale_support: [32, 64]
   max_npoint: 250000
@@ -51,15 +51,15 @@ STRUCTURE:
 
 TRAIN:
   start_epoch: 0
-  prepare_epochs: 120
-  epochs: 500
-  num_workers: 4 # data loader workers
+  prepare_epochs: 25
+  epochs: 100
+  num_workers: 0 # data loader workers
   optim: Adam # Adam or SGD
   lr: 0.001
   multiplier: 0.5
   momentum: 0.9
   weight_decay: 0.0001
-  save_freq: 10  # also eval_freq
+  save_freq: 5  # also eval_freq
   save_freq_last: 2
   fix_module: []
   # fix_module: [input_conv, unet, output_layer, semantic, semantic_linear]

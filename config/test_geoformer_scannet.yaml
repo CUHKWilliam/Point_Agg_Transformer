@@ -30,7 +30,7 @@ DETR:
   lr_scheduler: cosine
   
 DATA:
-  data_root: data
+  data_root: ../../data/geoformer/data/
   dataset: scannetv2
   filename_suffix: .npy
 

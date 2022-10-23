@@ -38,14 +38,13 @@ class InstDataset(TorchDataset):
         with open(split_filenames, "r") as f:
             self.scan_names = f.read().splitlines()
 
-        all_file_names = os.listdir(os.path.join(self.data_root, self.dataset, "scenes"))
+        all_file_names = os.listdir(os.path.join(self.data_root, self.dataset, "scenes/blocks_bs3_s3/data"))
         self.file_names = [
-            os.path.join(self.data_root, self.dataset, "scenes", f)
+            os.path.join(self.data_root, self.dataset, "scenes/blocks_bs3_s3/data", f)
             for f in all_file_names
             if f.split(".")[0][:12] in self.scan_names
         ]
         self.file_names = sorted(self.file_names)
-
         self.SEMANTIC_LABELS = FOLD[cfg.cvfold]
         self.SEMANTIC_LABELS_MAP = {val: (idx + 4) for idx, val in enumerate(self.SEMANTIC_LABELS)}
 
@@ -295,6 +294,7 @@ class InstDataset(TorchDataset):
         for i, ind in enumerate(inds):
             file_path = self.file_names[ind]
             data = np.load(file_path)
+            data[:, :3] -= data[:, :3].mean(0)
 
             xyz_origin = data[:, :3]
             rgb = data[:, 3:6]
@@ -403,15 +403,20 @@ class InstDataset(TorchDataset):
         locs_float = []
         feats = []
         test_scene_name = []
+        labels = []
+        instance_labels = []
 
         batch_offsets = [0]
 
         pc_mins = []
         pc_maxs = []
 
+        total_inst_num = 0
         for i, ind in enumerate(inds):
             file_path = self.file_names[ind]
             data = np.load(file_path)
+
+            data[:, :3] -= data[:, :3].mean(0)
 
             xyz_origin = data[:, :3]
             rgb = data[:, 3:6]
@@ -425,6 +430,32 @@ class InstDataset(TorchDataset):
             # offset
             xyz -= xyz.min(0)
 
+            label = data[:, 6].astype(np.int)
+            instance_label = data[:, 7].astype(np.int)
+
+            # ANCHOR modify semantic label
+            label_2 = np.ones_like(label) * -1
+            label_2[(label == 0).nonzero()] = 0  # floor
+            label_2[(label == 1).nonzero()] = 1  # wall
+            for idx, train_class in enumerate(self.SEMANTIC_LABELS):
+                label_2[(label == train_class).nonzero()] = idx + 4
+            label_2[(label == -100).nonzero()] = 2  # unannotate
+            label_2[(label_2 == -1).nonzero()] = 3  # test candidate
+
+            label = label_2
+            instance_label[(label <= 3).nonzero()] = -100
+
+            instance_label = self.getCroppedInstLabel(instance_label)
+
+            # get instance information
+            inst_num, inst_infos = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32))
+            inst_info = inst_infos["instance_info"]  # (n, 9), (cx, cy, cz, minx, miny, minz, maxx, maxy, maxz)
+            inst_pointnum = inst_infos["instance_pointnum"]  # (nInst), list
+
+            instance_label[np.where(instance_label != -100)] += total_inst_num
+            total_inst_num += inst_num
+
+
             # merge the scene to the batch
             batch_offsets.append(batch_offsets[-1] + xyz.shape[0])
 
@@ -432,6 +463,8 @@ class InstDataset(TorchDataset):
             locs_float.append(torch.from_numpy(xyz_middle))
             feats.append(torch.from_numpy(rgb))
             test_scene_name.append(self.test_names[ind])
+            labels.append(torch.from_numpy(label))
+            instance_labels.append(torch.from_numpy(instance_label))
 
             pc_mins.append(torch.from_numpy(xyz_middle.min(axis=0)))
             pc_maxs.append(torch.from_numpy(xyz_middle.max(axis=0)))
@@ -445,6 +478,8 @@ class InstDataset(TorchDataset):
         locs = torch.cat(locs, 0)  # long (N, 1 + 3), the batch item idx is put in locs[:, 0]
         locs_float = torch.cat(locs_float, 0).to(torch.float32)  # float (N, 3)
         feats = torch.cat(feats, 0)  # float (N, C)
+        labels = torch.cat(labels, 0).long()  # long (N)
+        instance_labels = torch.cat(instance_labels, 0).long()  # long (N)
 
         spatial_shape = np.clip((locs.max(0)[0][1:] + 1).numpy(), self.full_scale[0], None)  # long (3)
 
@@ -459,6 +494,8 @@ class InstDataset(TorchDataset):
             "locs_float": locs_float,
             "feats": feats,
             "id": inds,
+            "labels": labels,
+            "instance_labels": instance_labels,
             "offsets": batch_offsets,
             "spatial_shape": spatial_shape,
             "test_scene_name": test_scene_name,

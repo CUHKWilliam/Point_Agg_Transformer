@@ -65,7 +65,7 @@ class FSInstDataset:
     def my_worker_init_fn(self, worker_id):
         np.random.seed(np.random.get_state()[1][0] + worker_id)
 
-    def trainLoader(self, dist):
+    def trainLoader(self, dist=False):
         train_set = list(range(len(self.file_names)))
         if not dist:
             dataloader = DataLoader(

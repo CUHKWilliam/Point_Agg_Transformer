@@ -2,14 +2,14 @@ GENERAL:
   task: train  # train, test
   manual_seed: 123
   model_dir: model/pointgroup/pointgroup.py
-  dataset_dir: data/scannetv2_inst.py
+  dataset_dir: datasets/scannetv2_fs_inst.py
 
 META:
   train_fold: 0
   cvfold: 1
   k_shot: 1
   similarity_thresh: 0.2
-  fix_support: True
+  fix_support: False
   run_num: 10
   type_support: fullscene_fold
   file_support: support_vectors_df
@@ -37,7 +37,7 @@ DETR:
   lr_scheduler: cosine
   
 DATA:
-  data_root: data
+  data_root: ../../data/geoformer/data/
   dataset: scannetv2
 
   classes: 13
@@ -100,7 +100,6 @@ TEST:
   eval: True
   save_semantic: False
   save_pt_offsets: False
-  save_instance: False
   save_cluster: False
   save_fg: False
   save_instance: False

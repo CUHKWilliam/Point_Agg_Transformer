@@ -11,7 +11,7 @@ from checkpoint import align_and_update_state_dicts, strip_prefix_if_present
 from datasets.scannetv2 import BENCHMARK_SEMANTIC_LABELS
 
 from model.geoformer.geoformer_fs import GeoFormerFS
-from datasets.scannetv2_fs_inst import FSInstDataset
+from datasets.scannetv2_fs_inst_block import FSInstDataset
 from lib.pointgroup_ops.functions import pointgroup_ops
 from util.log import create_logger
 from util.utils_3d import load_ids, non_max_suppression_gpu
@@ -122,7 +122,7 @@ def do_test(model, dataset):
     model.eval()
     net_device = next(model.parameters()).device
 
-    set_support_vectors = load_set_support(model, dataset)
+    # set_support_vectors = load_set_support(model, dataset)
 
     logger.info(">>>>>>>>>>>>>>>> Start Inference >>>>>>>>>>>>>>>>")
     dataloader = dataset.testLoader()
@@ -159,7 +159,8 @@ def do_test(model, dataset):
                     remember = False if (j == 0 and k == 0) else True
 
                     support_embeddings = None
-                    if cfg.fix_support:
+                    # if cfg.fix_support:
+                    if False:
                         support_embeddings = set_support_vectors[k][label].unsqueeze(0).to(net_device)
                     else:
                         for key in support_dict:

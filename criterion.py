@@ -160,7 +160,6 @@ class InstSetCriterion(nn.Module):
                 pred_inds, inst_mask_gt, sem_cls_gt = self.matcher.forward_seg_single(
                     mask_logit_b_detach, cls_logit_b_detach, instance_masked_b, semantic_masked_b
                 )
-
                 self.cached.append((pred_inds, inst_mask_gt, sem_cls_gt))
             else:
                 pred_inds, inst_mask_gt, sem_cls_gt = self.cached[batch]
@@ -207,7 +206,7 @@ class InstSetCriterion(nn.Module):
 
         loss += semantic_loss
 
-        if epoch <= cfg.prepare_epochs:
+        if epoch <= cfg.prepare_epochs or "mask_predictions" not in model_outputs:
             loss_dict_out["sem_loss"] = (semantic_loss.item(), semantic_labels.shape[0])
             loss_dict_out["loss"] = (loss.item(), semantic_labels.shape[0])
             return loss, loss_dict_out

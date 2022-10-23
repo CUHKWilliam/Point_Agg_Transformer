@@ -20,6 +20,7 @@ from util.dataloader_util import get_rank
 from util.log import create_logger
 from util.utils_scheduler import adjust_learning_rate
 from torch.nn.parallel import DistributedDataParallel
+import apex
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -183,8 +184,8 @@ if __name__ == "__main__":
         torch.cuda.set_device(cfg.local_rank)
         torch.distributed.init_process_group(backend="nccl", init_method="env://")
         cfg.gpus = torch.distributed.get_world_size()
-
-    torch.cuda.set_device(0)
+    else:
+        torch.cuda.set_device(0)
     np.random.seed(cfg.manual_seed + get_rank())
     torch.manual_seed(cfg.manual_seed + get_rank())
     torch.cuda.manual_seed_all(cfg.manual_seed + get_rank())
@@ -193,7 +194,17 @@ if __name__ == "__main__":
     logger.info("=> creating model ...")
 
     model = GeoFormerFS()
-    model = model.cuda()
+
+    if distributed:
+        model = apex.parallel.convert_syncbn_model(model)
+        model = DistributedDataParallel(
+            model.cuda(cfg.local_rank),
+            device_ids=[cfg.local_rank],
+            output_device=cfg.local_rank,
+            find_unused_parameters=True,
+        )
+    else:
+        model = model.cuda()
 
     logger.info("# training parameters: {}".format(sum([x.nelement() for x in model.parameters() if x.requires_grad])))
 
@@ -245,13 +256,6 @@ if __name__ == "__main__":
     if start_epoch == -1:
         start_epoch = 1
 
-    if distributed:
-        model = DistributedDataParallel(
-            model.cuda(cfg.local_rank),
-            device_ids=[cfg.local_rank],
-            output_device=cfg.local_rank,
-            find_unused_parameters=True,
-        )
 
 
     for epoch in range(start_epoch, cfg.epochs + 1):
