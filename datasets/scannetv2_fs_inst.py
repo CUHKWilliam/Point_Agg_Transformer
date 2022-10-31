@@ -86,7 +86,7 @@ class FSInstDataset:
             test_set,
             batch_size=1,
             collate_fn=self.testMergeFS,
-            num_workers=0,
+            num_workers=1,
             shuffle=False,
             drop_last=False,
             pin_memory=True,

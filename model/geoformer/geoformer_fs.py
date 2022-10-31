@@ -302,6 +302,8 @@ class GeoFormerFS(nn.Module):
             n_queries, n_contexts = geo_dist.shape[:2]
             max_geo_dist_context = torch.max(geo_dist, dim=1)[0]  # n_queries
             max_geo_val = torch.max(max_geo_dist_context)
+            if max_geo_val < 0:
+                max_geo_val *= 0.
             max_geo_dist_context[max_geo_dist_context < 0] = max_geo_val
             max_geo_dist_context = torch.sqrt(max_geo_dist_context)
 
@@ -322,7 +324,6 @@ class GeoFormerFS(nn.Module):
             x = F.conv1d(x, w, bias=b, stride=1, padding=0, groups=num_insts)
             if i < n_layers - 1:
                 x = F.relu(x)
-
         return x
 
     def get_mask_prediction(
@@ -453,7 +454,7 @@ class GeoFormerFS(nn.Module):
     #         batch_idxs__ = torch.cat(batch_idxs__, dim=0)
     #     return (batch_idxs__, coords__, coords_float, support_embeddings)
 
-    def process_support(self, batch_input, training=True, corr_save_path=None):
+    def process_support(self, batch_input, training=True, vis_path=None):
         batch_idxs = batch_input["locs"][:, 0].int()
         coords = batch_input["locs"][:, 1:].int()
         p2v_map = batch_input["p2v_map"]
@@ -504,9 +505,9 @@ class GeoFormerFS(nn.Module):
                 support_embeddings.append(context_feats_b.squeeze(0))
 
                 ## for visualization
-                if corr_save_path is not None:
-                    visualize_pts_open3d(context_locs_b.squeeze(0), filename=os.path.join(corr_save_path, "sampled_support_{}.ply".format(b)))
-                    visualize_pts_open3d(locs_float_[start:end, :], filename=os.path.join(corr_save_path, "support_masked_{}.ply"))
+                if vis_path is not None:
+                    visualize_pts_open3d(context_locs_b.squeeze(0), filename=os.path.join(vis_path, "sampled_support_{}.ply".format(b)))
+                    visualize_pts_open3d(locs_float_[start:end, :], filename=os.path.join(vis_path, "support_masked_{}.ply".format(b)))
             ## TODO: self-alignment
             support_embeddings = torch.cat(support_embeddings, dim=0)  # batch x channel
             coords_float = torch.cat(coords_float, dim=0)
@@ -515,9 +516,9 @@ class GeoFormerFS(nn.Module):
         return (batch_idxs__, coords__, coords_float, support_embeddings)
 
     def forward(self, support_dict, scene_dict, training=True, remember=False,
-                support_feats=None, show_corr=False, corr_save_path=None):
+                support_feats=None, show=False, vis_path=None):
 
-        # show_corr = True
+        # show = True
 
         outputs = {}
 
@@ -566,6 +567,9 @@ class GeoFormerFS(nn.Module):
             fg_idxs = torch.nonzero(fg_condition).view(-1)
             coords_ = coords[fg_idxs]
             batch_idxs_ = batch_idxs[fg_idxs]
+            if len(batch_idxs_.unique()) < batch_size:
+                return None
+
             batch_offsets_ = utils.get_batch_offsets(batch_idxs_, batch_size)
             locs_float_ = locs_float[fg_idxs]
             output_feats_ = output_feats[fg_idxs]
@@ -592,13 +596,13 @@ class GeoFormerFS(nn.Module):
             return outputs
 
         if support_feats is None:
-            support_feats = self.process_support(support_dict, training, corr_save_path)  # batch x channel
+            support_feats = self.process_support(support_dict, training, vis_path)  # batch x channel
 
         ## TODO: calculate corr. map between support_feats and query_feats
         # query x support
         corr = Correlation.multilayer_correlation(context_feats4corr, support_feats)
 
-        if show_corr:
+        if show:
             # if False:
             (
                 corr_batch_idxs,
@@ -618,15 +622,21 @@ class GeoFormerFS(nn.Module):
                 coords_sel = corr_coords_float_b[selected][:, :3].float()
                 feats_sel = corr_feats_b[selected]
                 colors = feats_sel.unsqueeze(-1).repeat((1, 3))
-                save_path = os.path.join(corr_save_path, "corr_{}.ply".format("_".join(supp_coord.detach().cpu().numpy()
+                save_path = os.path.join(vis_path, "corr_{}.ply".format("_".join(supp_coord.detach().cpu().numpy()
                                                                                        .astype(str).tolist())))
                 visualize_pts_open3d(coords_sel, colors, filename=save_path)
 
             # import ipdb;ipdb.set_trace()
             coords_float_b = locs_float[batch_idxs == batch_id]
             color = torch.ones((coords_float_b.size(0), 3)).float().cuda()
-            color[scene_dict["labels"][batch_idxs == batch_id] > 0] = torch.tensor([1., 0., 0.]).float().cuda()
-            visualize_pts_open3d(coords_float_b, color, filename=os.path.join(corr_save_path, "query.ply"))
+            if training:
+                color[scene_dict["labels"][batch_idxs == batch_id] > 0] = torch.tensor([1., 0., 0.]).float().cuda()
+            else:
+                from datasets.scannetv2 import FOLD1
+
+                color[(scene_dict["labels"][batch_idxs == batch_id].unsqueeze(1) ==
+                       torch.tensor(FOLD1).int().cuda().unsqueeze(0)).any(-1)] = torch.tensor([1., 0., 0.]).float().cuda()
+            visualize_pts_open3d(coords_float_b, color, filename=os.path.join(vis_path, "query.ply"))
 
             coords_float_b = support_dict["locs_float"][
                              support_dict["batch_offsets"][batch_id]: support_dict["batch_offsets"][batch_id + 1]]
@@ -634,7 +644,7 @@ class GeoFormerFS(nn.Module):
             color[support_dict["support_masks"] \
                       [support_dict["batch_offsets"][batch_id]: support_dict["batch_offsets"][batch_id + 1]] > 0] \
                 = torch.tensor([1., 0., 0.]).float().cuda()
-            visualize_pts_open3d(coords_float_b, color, filename=os.path.join(corr_save_path, "support.ply"))
+            visualize_pts_open3d(coords_float_b, color, filename=os.path.join(vis_path, "support.ply"))
 
         corr = self.cost_aggregation(corr, context_feats4corr)
 
@@ -645,8 +655,8 @@ class GeoFormerFS(nn.Module):
             corr_feats_unshuffled,
         ) = corr
 
-        if show_corr:
-            save_path = os.path.join(corr_save_path, "corr_conved.ply")
+        if show:
+            save_path = os.path.join(vis_path, "corr_conved.ply")
             visualize_pts_open3d(corr_coords_float_unshuffled[corr_batch_idxs == 0], filename=save_path)
 
         corr_coords, corr_coords_float, corr_feats = [], [], []
@@ -667,8 +677,8 @@ class GeoFormerFS(nn.Module):
             utils.get_batch_offsets(corr_batch_idxs, batch_size),
             batch_size)
         context_locs, corr_context_feats, pre_enc_inds = corr_contexts
-        if show_corr:
-            save_path = os.path.join(corr_save_path, "corr_conved_aggre.ply")
+        if show:
+            save_path = os.path.join(vis_path, "corr_conved_aggre.ply")
             visualize_pts_open3d(context_locs[0], filename=save_path)
 
         query_locs = context_locs[:, : cfg.n_query_points, :]
@@ -703,10 +713,10 @@ class GeoFormerFS(nn.Module):
             batch_offsets__,
             max_step=128 if self.training else 256,
             neighbor=64,
-            radius=0.1,
+            radius=0.21,
             n_queries=cfg.n_query_points,
         )
-        if show_corr:
+        if show:
             batch_id = 0
             start, end = batch_offsets__[batch_id], batch_offsets__[batch_id + 1]
             locs_float_b__ = locs_float__[start: end, :]
@@ -715,7 +725,7 @@ class GeoFormerFS(nn.Module):
             anc_col = torch.ones((len(anchors), 3)).float().cuda() * torch.tensor([1., 0., 0.]).float().cuda()
             pts_col = torch.ones((len(pts), 3)).float().cuda() 
             colors = torch.cat([anc_col, pts_col], dim=0)
-            visualize_pts_open3d(locs_float_b__, colors, filename=os.path.join(corr_save_path, "anchors_context.ply"))
+            visualize_pts_open3d(locs_float_b__, colors, filename=os.path.join(vis_path, "anchors_context.ply"))
 
         self.cache_data = (
             fg_idxs,
@@ -760,7 +770,7 @@ class GeoFormerFS(nn.Module):
         outputs["batch_idxs"] = batch_idxs_
         outputs["simnet"] = similarity_score
         outputs["mask_predictions"] = mask_predictions
-        if training and not show_corr:
+        if training and not show:
             return outputs
 
         similarity_score_sigmoid = similarity_score.detach().sigmoid()
@@ -776,12 +786,12 @@ class GeoFormerFS(nn.Module):
         )
         outputs["proposal_scores"] = (scores_final, proposals_pred)
 
-        if show_corr:
+        if show:
             batch_id = 0
             query_locs_b = query_locs[batch_id]
             simi_score_b = similarity_score_sigmoid[batch_id]
             colors = simi_score_b.unsqueeze(-1).repeat((1, 3))
-            save_path = os.path.join(corr_save_path, "query_simi.ply")
+            save_path = os.path.join(vis_path, "query_simi.ply")
             visualize_pts_open3d(query_locs_b, colors, filename=save_path)
             # visualize_pts_open3d(query_locs_b, colors, filename="debug.ply")
 
@@ -792,13 +802,13 @@ class GeoFormerFS(nn.Module):
 
                 for idx, proposal in enumerate(proposals_pred):
                     proposal = proposal[fg_idxs[batch_idxs_ == 0]]
-                    if scores_final[idx] < 0.2:
+                    if scores_final[idx] < 0.7:
                         continue
                     mask = proposal > 0
                     color = torch.randint(low=0, high=255,
                                           size=(1, 3)).float().cuda().repeat((mask.sum(), 1)) / 255.
                     colors[proposal > 0] = color
-                save_path = os.path.join(corr_save_path, "pred_{}.ply".format(idx))
+                save_path = os.path.join(vis_path, "pred_{}.ply".format(idx))
                 visualize_pts_open3d(coords_float_b, colors, filename=save_path)
         return outputs
 
@@ -839,10 +849,6 @@ class GeoFormerFS(nn.Module):
                 end = batch_offsets_[b + 1]
                 locs_float_b = locs_float_[start:end, :]
                 output_feats_b = output_feats_[start:end, :]
-                batch_points = (end - start).item()
-
-                if batch_points == 0:
-                    return None
 
                 locs_float_b = locs_float_b.unsqueeze(0)
                 output_feats_b = output_feats_b.unsqueeze(0)
@@ -927,74 +933,3 @@ class GeoFormerFS(nn.Module):
         )
 
         return dec_outputs
-
-    def get_similarity(
-        self, mask_logit_final, batch_offsets_, locs_float_, output_feats_, support_embeddings, pre_enc_inds_mask=None
-    ):
-        batch_size = len(mask_logit_final)
-
-        no_cache = pre_enc_inds_mask is None
-        with torch.no_grad():
-            if no_cache:
-                pre_enc_inds_mask = []
-            final_mask_features_arr = []
-            for b in range(batch_size):
-                start = batch_offsets_[b]
-                end = batch_offsets_[b + 1]
-
-                locs_float_b = locs_float_[start:end, :].unsqueeze(0)
-                output_feats_b = output_feats_[start:end, :].unsqueeze(0)  # 1, n_point, f
-
-                npoint_new = min(4096, end - start)
-
-                context_locs_b, grouped_features, grouped_xyz, pre_enc_inds_b1 = self.set_aggregator.group_points(
-                    locs_float_b.contiguous(),
-                    output_feats_b.transpose(1, 2).contiguous(),
-                    npoint_new=npoint_new,
-                    inds=None if no_cache else pre_enc_inds_mask[b],
-                )
-
-                context_feats_b1 = self.set_aggregator.mlp(grouped_features, grouped_xyz, pooling="avg")
-                context_feats_b1 = context_feats_b1.transpose(1, 2)  # 1 x n_point x channel
-
-                mask_logit_final_b = mask_logit_final[b].detach().sigmoid()  # n_queries, mask
-
-                mask_logit_final_b = mask_logit_final_b[:, pre_enc_inds_b1.squeeze(0).long()]
-                mask_logit_final_bool = mask_logit_final_b >= 0.2  # n_queries, mask
-
-                count_mask = torch.sum(mask_logit_final_bool, dim=1).int()
-
-                output_feats_b_expand = context_feats_b1.expand(
-                    count_mask.shape[0], context_feats_b1.shape[1], context_feats_b1.shape[2]
-                )  # n_queries, mask, f
-
-                final_mask_features = torch.sum(
-                    (output_feats_b_expand * mask_logit_final_bool[:, :, None]), dim=1
-                )  # n_queries, f
-
-                final_mask_features = final_mask_features / (count_mask[:, None] + 1e-6)  # n_queries, f
-
-                final_mask_features[count_mask <= 1] = 0.0
-                final_mask_features_arr.append(final_mask_features)
-                if no_cache:
-                    pre_enc_inds_mask.append(pre_enc_inds_b1)
-            final_mask_features_arr = torch.stack(final_mask_features_arr, dim=0)  # batch, n_queries, f
-
-        """ channel-wise correlate """
-        channel_wise_tensor_sim = final_mask_features_arr * support_embeddings.unsqueeze(1).repeat(
-            1, final_mask_features_arr.shape[1], 1
-        )
-        subtraction_tensor_sim = final_mask_features_arr - support_embeddings.unsqueeze(1).repeat(
-            1, final_mask_features_arr.shape[1], 1
-        )
-        aggregation_tensor_sim = torch.cat(
-            [channel_wise_tensor_sim, subtraction_tensor_sim, final_mask_features_arr], dim=2
-        )
-
-        similarity_score = (
-            self.similarity_net(aggregation_tensor_sim.flatten(0, 1))
-            .squeeze(-1)
-            .reshape(batch_size, aggregation_tensor_sim.shape[1])
-        )  # batch  x n_sampling
-
-        return similarity_score, pre_enc_inds_mask

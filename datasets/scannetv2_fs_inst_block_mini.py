@@ -608,7 +608,7 @@ class FSInstDataset:
         query_batch_offsets = torch.tensor([0, query_xyz_middle.shape[0]], dtype=torch.int)
 
         query_label = torch.from_numpy(query_label)
-        # query_instance_label = torch.from_numpy(query_instance_label)
+        query_instance_label = torch.from_numpy(query_instance_label)
 
         query_spatial_shape = np.clip((query_locs.max(0)[0][1:] + 1).numpy(), cfg.full_scale[0], None)
 

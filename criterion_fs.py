@@ -135,8 +135,6 @@ class FSInstSetCriterion(nn.Module):
                     continue
 
                 inst_label = torch.mode(scene_instance_labels_b_[mask_points])[0].item()
-                # print("inst_label:", inst_label)
-
                 if inst_label == -100:
                     num_negative += 1
                     negative_inds.append(n)
@@ -146,7 +144,6 @@ class FSInstSetCriterion(nn.Module):
                 intersection = ((mask_logits_b_n + mask_logits_label) > 1).long().sum()
                 union = ((mask_logits_b_n + mask_logits_label) > 0).long().sum()
                 iou = torch.true_divide(intersection, union)
-                # print("iou", iou, "intersec:", intersection, "union:", union)
 
                 if iou >= 0.5:
                     num_positive += 1
@@ -155,17 +152,18 @@ class FSInstSetCriterion(nn.Module):
                     num_negative += 1
                     negative_inds.append(n)
 
-            if num_negative > cfg.negative_ratio * num_positive:
-                n_hard_negatives[b] = max(cfg.negative_ratio * num_positive, 0.2 * num_negative)
-            else:
-                n_hard_negatives[b] = num_negative
+            # if num_negative > cfg.negative_ratio * num_positive:
+            #     n_hard_negatives[b] = max(cfg.negative_ratio * num_positive, 0.2 * num_negative)
+            # else:
+            #     n_hard_negatives[b] = num_negative
 
-            # n_hard_negatives[b] = num_negative
+            n_hard_negatives[b] = num_negative
 
             train_label[b, positive_inds] = 1
+            # print('train_label', train_label)
 
-        if train_label.sum() == 0:
-            return torch.tensor(0.0, requires_grad=True).to(similarity_score.device)
+        # if train_label.sum() == 0:
+        #     return torch.tensor(0.0, requires_grad=True).to(similarity_score.device)
 
         loss_all = self.similarity_criterion(similarity_score, train_label)
         loss_neg = loss_all.clone()
@@ -180,7 +178,7 @@ class FSInstSetCriterion(nn.Module):
         )  # (N, 8732)
         hard_negatives = hardness_ranks < n_hard_negatives.unsqueeze(1)  # (N, 8732)
         loss_hard_neg = loss_neg[hard_negatives]
-        similarity_loss = (loss_hard_neg.sum() + loss_pos.sum()) / loss_pos.sum()
+        similarity_loss = (loss_hard_neg.sum() + loss_pos.sum()) / len(train_label)
 
         return similarity_loss
 
@@ -250,6 +248,7 @@ class FSInstSetCriterion(nn.Module):
         mask_logits = mask_predictions[-1]["mask_logits"]
 
         similarity_score = model_outputs["simnet"]
+
 
         if epoch > cfg.prepare_epochs and self.cal_simloss:
             sim_loss = self.sim_loss(similarity_score, instance_masked, mask_logits, batch_ids)

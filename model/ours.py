@@ -68,57 +68,33 @@ class MinskiUNet(ME.MinkowskiNetwork):
             corrs,
         ) = corr
 
-        _, unique_map, inverse_map = ME.utils.sparse_quantize(corr_coords.float(), return_index=True, return_inverse=True)
-        corr_in = ME.SparseTensor(corrs[unique_map],
-                                  coordinates=torch.cat((corr_batch_idxs[unique_map].unsqueeze(-1), corr_coords[unique_map]), dim=-1)
-                                  )
-        corr_coords_float_in = corr_coords_float[unique_map]
+        corr_in = ME.SparseTensor(corrs, coordinates=torch.cat((corr_batch_idxs.unsqueeze(-1), corr_coords), dim=-1))
         (
             query_batch_idxs,
             query_coords,
             query_coords_float,
             query_feats,
         ) = query
-
-        _, unique_map, inverse_map = ME.utils.sparse_quantize(query_coords.float(), return_index=True, return_inverse=True)
-
-        query_in = ME.SparseTensor(query_feats[unique_map],
-                                   coordinates=torch.cat((query_batch_idxs[unique_map].unsqueeze(-1), query_coords[unique_map]), dim=-1)
+        query_in = ME.SparseTensor(query_feats,
+                                   coordinates=torch.cat((query_batch_idxs.unsqueeze(-1), query_coords), dim=-1)
                                    )
 
         corr_out1 = self.encoder_corr1(corr_in)[0]
         query_out = self.encoder_q(query_in)[0]
 
 
-        matched = []
-        for b in range(torch.unique(query_out.coordinates[:, 0]).max() + 1):
-            query_out_b = query_out.coordinates[query_out.coordinates[:, 0] == b]
-            corr_out1_b = corr_out1.coordinates[corr_out1.coordinates[:, 0] == b]
-            dist = ((query_out_b[:, 1:4].unsqueeze(0) - corr_out1_b[:, 1:4].unsqueeze(1)) ** 2).sum(-1)
-            dist_min, matched_b = dist.min(-1)
-            if b > 0:
-                matched_b += (query_out.coordinates[:, 0] == b - 1).sum()
-            matched.append(matched_b)
-        matched = torch.cat(matched, dim=0)
-        matched_query_feat = ME.SparseTensor(query_out.features[matched],
-                                         coordinate_manager=corr_out1.coordinate_manager,
-                                         coordinate_map_key=corr_out1.coordinate_map_key
-                                         )
-
+        matched = (query_out.coordinates.unsqueeze(0) == corr_out1.coordinates[:, :4].unsqueeze(1)).all(-1)
+        indices = torch.where(matched)[1]
+        matched_query_feat = ME.SparseTensor(query_out.features[indices],
+                                             coordinate_manager=corr_out1.coordinate_manager,
+                                             coordinate_map_key=corr_out1.coordinate_map_key
+                                             )
         corr_out2 = ME.cat(corr_out1, matched_query_feat)
 
         corr_out = self.encoder_corr2(corr_out2)[0]
-        indices_in, indices_out = get_coords_map(corr_in, corr_out)
-        indices_out_uniq = torch.unique(indices_out)
-        coords_out_in_map = indices_out_uniq.unsqueeze(1) == indices_out.unsqueeze(0)
-        corr_coords_float_out = [
-            corr_coords_float_in[coords_out_in_map[i]].mean(0) for i in range(len(coords_out_in_map))
-        ]
-
-        corr_coords_float_out = torch.stack(corr_coords_float_out, dim=0)[:, :3]
-
         batch_idxs_out = corr_out.coordinates[:, 0]
         feature_out = corr_out.features.clone()
+        corr_coords_float_out = []
         for b in range(batch_idxs_out.max() + 1):
             coords_supp_b = corr_out.coordinates[batch_idxs_out == b]
             feat_b = feature_out[batch_idxs_out == b]
@@ -126,6 +102,17 @@ class MinskiUNet(ME.MinkowskiNetwork):
                 mask = torch.where((coords_supp_b[:, -3:] == coords_unique).all(-1))[0]
                 feat_b[mask] = feat_b[mask].mean(0)
             feature_out[batch_idxs_out == b] = feat_b
+
+            batch_mask = corr_batch_idxs == b
+            offsets = corr_coords_float[batch_mask][:, : 3].min(0)[0]
+            corr_coords_float_b = corr_coords_float[batch_mask][:, : 3] - offsets
+            batch_mask_o = batch_idxs_out == b
+            corr_coords_float_out_b = corr_out.coordinates[batch_mask_o][:, 1: 4] / \
+                                      corr_coords[batch_mask][:, : 3].max(0)[0] * \
+                                      corr_coords_float_b.max(0)[0]
+            corr_coords_float_out_b += offsets
+            corr_coords_float_out.append(corr_coords_float_out_b)
+        corr_coords_float_out = torch.cat(corr_coords_float_out, dim=0)
 
         # for vis
         # import open3d as o3d

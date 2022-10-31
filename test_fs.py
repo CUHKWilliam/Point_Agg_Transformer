@@ -11,7 +11,7 @@ from checkpoint import align_and_update_state_dicts, strip_prefix_if_present
 from datasets.scannetv2 import BENCHMARK_SEMANTIC_LABELS
 
 from model.geoformer.geoformer_fs import GeoFormerFS
-from datasets.scannetv2_fs_inst_block import FSInstDataset
+from datasets.scannetv2_fs_inst import FSInstDataset
 from lib.pointgroup_ops.functions import pointgroup_ops
 from util.log import create_logger
 from util.utils_3d import load_ids, non_max_suppression_gpu
@@ -122,7 +122,7 @@ def do_test(model, dataset):
     model.eval()
     net_device = next(model.parameters()).device
 
-    # set_support_vectors = load_set_support(model, dataset)
+    set_support_vectors = load_set_support(model, dataset)
 
     logger.info(">>>>>>>>>>>>>>>> Start Inference >>>>>>>>>>>>>>>>")
     dataloader = dataset.testLoader()
@@ -155,25 +155,36 @@ def do_test(model, dataset):
                     query_dict[key] = query_dict[key].to(net_device)
 
             for j, (label, support_dict) in enumerate(zip(active_label, list_support_dicts)):
+                cfg.run_num = 1
                 for k in range(cfg.run_num):  # NOTE number of runs
                     remember = False if (j == 0 and k == 0) else True
 
                     support_embeddings = None
-                    # if cfg.fix_support:
-                    if False:
+                    if cfg.fix_support:
                         support_embeddings = set_support_vectors[k][label].unsqueeze(0).to(net_device)
                     else:
                         for key in support_dict:
                             if torch.is_tensor(support_dict[key]):
                                 support_dict[key] = support_dict[key].to(net_device)
 
+                    show = False
+                    vis_path = None
+
+                    if i % 1 == 0:
+                        show = True
+                        vis_path = os.path.join(cfg.output_path, "test", "{}".format(i))
+                        os.makedirs(vis_path, exist_ok=True)
+
                     outputs = model(
                         support_dict,
                         query_dict,
                         training=False,
-                        remember=remember,
-                        support_embeddings=support_embeddings,
+                        remember=False,
+                        show=show,
+                        vis_path=vis_path
                     )
+                    if outputs is None:
+                        continue
 
                     if outputs["proposal_scores"] is None:
                         continue
@@ -189,6 +200,7 @@ def do_test(model, dataset):
                     cluster_semantic_id[k].append(cluster_semantic)
 
                     # torch.cuda.empty_cache()
+            break
 
             test_scene_name_arr.append(test_scene_name)
             gt_file_name = os.path.join(cfg.data_root, cfg.dataset, "val_gt", test_scene_name + ".txt")

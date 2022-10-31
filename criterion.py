@@ -15,7 +15,6 @@ def dice_coefficient(x, target):
     loss = 1.0 - (2 * intersection / union)
     return loss
 
-
 def compute_dice_loss(inputs, targets, num_boxes):
     """
     Compute the DICE loss, similar to generalized IOU for masks
@@ -32,7 +31,6 @@ def compute_dice_loss(inputs, targets, num_boxes):
     denominator = inputs.sum(-1) + targets.sum(-1)
     loss = 1 - (numerator + 1) / (denominator + 1)
     return loss.sum() / (num_boxes + 1e-6)
-
 
 def compute_sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
     """
@@ -160,6 +158,7 @@ class InstSetCriterion(nn.Module):
                 pred_inds, inst_mask_gt, sem_cls_gt = self.matcher.forward_seg_single(
                     mask_logit_b_detach, cls_logit_b_detach, instance_masked_b, semantic_masked_b
                 )
+
                 self.cached.append((pred_inds, inst_mask_gt, sem_cls_gt))
             else:
                 pred_inds, inst_mask_gt, sem_cls_gt = self.cached[batch]
@@ -200,13 +199,18 @@ class InstSetCriterion(nn.Module):
         loss = torch.tensor(0.0, requires_grad=True).to(semantic_scores.device)
 
         if "semantic" not in cfg.fix_module:
-            semantic_loss = self.semantic_criterion(semantic_scores, semantic_labels)
+            if epoch <= cfg.prepare_epochs or "mask_predictions" not in model_outputs:
+                semantic_loss = self.semantic_criterion(semantic_scores, semantic_labels)
+            else:
+                original_semantic_labels = batch_inputs["original_labels"]
+                semantic_loss = self.semantic_criterion(semantic_scores, original_semantic_labels)
+                print("original_sem_labels", torch.unique(original_semantic_labels))
         else:
             semantic_loss = torch.tensor(0.0, requires_grad=True).to(semantic_scores.device)
 
         loss += semantic_loss
 
-        if epoch <= cfg.prepare_epochs or "mask_predictions" not in model_outputs:
+        if epoch <= cfg.prepare_epochs:
             loss_dict_out["sem_loss"] = (semantic_loss.item(), semantic_labels.shape[0])
             loss_dict_out["loss"] = (loss.item(), semantic_labels.shape[0])
             return loss, loss_dict_out

@@ -2,15 +2,20 @@ GENERAL:
   task: train  # train, test
   manual_seed: 123
   model_dir: model/pointgroup/pointgroup.py
-  dataset_dir: datasets/scannetv2_fs_inst.py
+  dataset_dir: data/scannetv2_inst.py
 
 META:
   train_fold: 0
   cvfold: 1
   k_shot: 1
   similarity_thresh: 0.2
+<<<<<<< HEAD
   fix_support: False
+  run_num: 1
+=======
+  fix_support: True
   run_num: 10
+>>>>>>> parent of 137b5c0 (v2)
   type_support: fullscene_fold
   file_support: support_vectors_df
   test_model: geoformer
@@ -25,8 +30,8 @@ DETR:
 
 
   n_downsampling: 20000
-  n_decode_point: 2048
-  n_query_points: 128
+  n_decode_point: 512
+  n_query_points: 64
 
   filter_biases_wd: False
   weight_decay: 0.1
@@ -37,7 +42,7 @@ DETR:
   lr_scheduler: cosine
   
 DATA:
-  data_root: ../../data/geoformer/data/
+  data_root: data
   dataset: scannetv2
 
   classes: 13
@@ -94,12 +99,13 @@ TEST:
 
   BENCHMARK_SEMANTIC_LABELS: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 24, 28, 33, 34, 36, 39]
   TEST_NMS_THRESH: 0.05
-  TEST_SCORE_THRESH: 0.5
+  TEST_SCORE_THRESH: 0.7
   TEST_NPOINT_THRESH: 500
 
   eval: True
   save_semantic: False
   save_pt_offsets: False
+  save_instance: False
   save_cluster: False
   save_fg: False
   save_instance: False

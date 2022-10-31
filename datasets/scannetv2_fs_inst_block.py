@@ -65,7 +65,7 @@ class FSInstDataset:
     def my_worker_init_fn(self, worker_id):
         np.random.seed(np.random.get_state()[1][0] + worker_id)
 
-    def trainLoader(self, dist=False):
+    def trainLoader(self, dist):
         train_set = list(range(len(self.file_names)))
         if not dist:
             dataloader = DataLoader(
@@ -95,12 +95,13 @@ class FSInstDataset:
 
         self.test_names = [os.path.basename(i).split(".")[0][:12] for i in self.file_names]
         self.test_combs = self.get_test_comb()
+        self.test_names = np.unique(np.array(list(self.test_combs.keys()))).tolist()
         test_set = list(np.arange(len(self.test_names)))
         dataloader = DataLoader(
             test_set,
             batch_size=1,
             collate_fn=self.testMergeFS,
-            num_workers=1,
+            num_workers=0,
             shuffle=False,
             drop_last=False,
             pin_memory=True,
@@ -110,38 +111,39 @@ class FSInstDataset:
 
     def get_test_comb(self):
         test_combs_file = os.path.join(
-            self.data_root, self.dataset, "test_combinations_fold" + str(cfg.cvfold) + ".pkl"
+            self.data_root, self.dataset, "test_combinations_fold" + str(cfg.cvfold) + "_block.pkl"
         )
-
         if os.path.exists(test_combs_file):
             # load class2scans (dictionary)
             print("Load test combination: ", test_combs_file)
             with open(test_combs_file, "rb") as f:
                 test_combs = pickle.load(f)
         else:
-            test_combs = {k: {} for k in self.test_names}
-            for i, file_name in enumerate(self.test_names):
-                data = np.load(os.path.join(self.data_root, self.dataset, "scenes", "%s.npy" % file_name))
-                label = data[:, 6].astype(np.int)
-                unique_label = np.unique(label)
-                active_label = []
-                for l in unique_label:
-                    if l == -100:
-                        continue
-
-                    if l in FOLD[cfg.cvfold]:
-                        active_label.append(l)
-
-                test_combs[file_name]["active_label"] = active_label
-                if len(active_label) == 0:
-                    continue
-
-                for l in active_label:
-                    support_tuple = random.choice(self.class2instances[l])
-                    test_combs[file_name][l] = support_tuple
-
-            with open(test_combs_file, "wb") as f:
-                pickle.dump(test_combs, f, pickle.HIGHEST_PROTOCOL)
+            raise FileNotFoundError
+        # else:
+        #     test_combs = {k: {} for k in self.test_names}
+        #     for i, file_name in enumerate(self.test_names):
+        #         data = np.load(os.path.join(self.data_root, self.dataset, "scenes", "%s.npy" % file_name))
+        #         label = data[:, 6].astype(np.int)
+        #         unique_label = np.unique(label)
+        #         active_label = []
+        #         for l in unique_label:
+        #             if l == -100:
+        #                 continue
+        #
+        #             if l in FOLD[cfg.cvfold]:
+        #                 active_label.append(l)
+        #
+        #         test_combs[file_name]["active_label"] = active_label
+        #         if len(active_label) == 0:
+        #             continue
+        #
+        #         for l in active_label:
+        #             support_tuple = random.choice(self.class2instances[l])
+        #             test_combs[file_name][l] = support_tuple
+        #
+        #     with open(test_combs_file, "wb") as f:
+        #         pickle.dump(test_combs, f, pickle.HIGHEST_PROTOCOL)
 
         print("len test combs:", len(list(test_combs.keys())))
         return test_combs
@@ -588,7 +590,6 @@ class FSInstDataset:
         index = ids[0]  # batch size 1
 
         query_scene_name = self.test_names[index]
-
         test_comb = self.test_combs[query_scene_name]
 
         # NOTE test scene does not contain any test categories
@@ -608,7 +609,7 @@ class FSInstDataset:
         query_batch_offsets = torch.tensor([0, query_xyz_middle.shape[0]], dtype=torch.int)
 
         query_label = torch.from_numpy(query_label)
-        # query_instance_label = torch.from_numpy(query_instance_label)
+        query_instance_label = torch.from_numpy(query_instance_label)
 
         query_spatial_shape = np.clip((query_locs.max(0)[0][1:] + 1).numpy(), cfg.full_scale[0], None)
 
@@ -631,6 +632,7 @@ class FSInstDataset:
             "pc_mins": query_pc_min,
             "pc_maxs": query_pc_max,
             "labels": query_label,
+            "instance_labels": query_instance_label
         }
 
         if cfg.fix_support:

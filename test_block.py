@@ -13,7 +13,7 @@ from datasets.scannetv2_inst_block import InstDataset
 from model.geoformer.geoformer import GeoFormer
 from util.log import create_logger
 from util.utils_3d import load_ids, non_max_suppression_gpu
-
+import os
 
 def init():
     global result_dir
@@ -54,7 +54,19 @@ def do_test(model, dataloader, cur_epoch):
                 if torch.is_tensor(batch_input[key]):
                     batch_input[key] = batch_input[key].to(net_device)
 
-            outputs, batch_input = model(batch_input, cur_epoch, training=False)
+            show = False
+            vis_path = None
+
+            if i % 1 == 0:
+                show = True
+                vis_path = os.path.join(cfg.output_path, "test", "{}".format(i))
+                os.makedirs(vis_path, exist_ok=True)
+
+            outputs, batch_input = model(batch_input, cur_epoch, training=False, show=show, vis_path=vis_path)
+
+            if outputs is None:
+                continue
+
 
             if "proposal_scores" not in outputs.keys():
                 continue
@@ -72,7 +84,9 @@ def do_test(model, dataloader, cur_epoch):
             instance_inds = batch_input["instance_labels"].detach().cpu().numpy()
             instance_inds[class_inds <= 3] *= 0
             class_inds_mask = class_inds > 3
-            class_inds[class_inds_mask] = np.array(FOLD[cfg.cvfold])[class_inds[class_inds_mask] - 4]
+            class_inds[class_inds_mask] = np.array(BENCHMARK_SEMANTIC_LABELS)[
+                np.array(FOLD[cfg.cvfold])[class_inds[class_inds_mask] - 4]
+            ]
             gt_inds = class_inds * 1000 + instance_inds
             gt_inds[np.logical_not(class_inds_mask)] *= 0
             gt_inds_all.append(gt_inds)
@@ -124,7 +138,7 @@ def do_test(model, dataloader, cur_epoch):
                     continue
 
                 # gt_file_name = gt_file_arr[i]
-                # test_scene_name = test_scene_name_arr[i]
+                test_scene_name = test_scene_name_arr[i]
                 # gt_ids = load_ids(gt_file_name)
 
                 gt_ids = gt_inds_all[i]

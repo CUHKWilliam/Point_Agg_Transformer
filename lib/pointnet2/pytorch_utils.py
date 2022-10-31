@@ -30,7 +30,33 @@ class SharedMLP(nn.Sequential):
                     preact=preact,
                 ),
             )
-
+class SharedMLPModule(nn.Module):
+    def __init__(
+        self,
+        args: List[int],
+        *,
+        bn: bool = False,
+        activation=nn.ReLU(inplace=True),
+        preact: bool = False,
+        first: bool = False,
+        name: str = ""
+    ):
+        super().__init__()
+        self.net = nn.Sequential()
+        for i in range(len(args) - 1):
+            self.net.add_module(
+                name + "layer{}".format(i),
+                Conv2dModule(
+                    args[i],
+                    args[i + 1],
+                    bn=(not first or not preact or (i != 0)) and bn,
+                    activation=activation if (not first or not preact or (i != 0)) else None,
+                    preact=preact,
+                ),
+            )
+    def forward(self, x):
+        output = self.net(x)
+        return output
 
 class _BNBase(nn.Sequential):
     def __init__(self, in_size, batch_norm=None, name=""):
@@ -50,11 +76,82 @@ class BatchNorm2d(_BNBase):
     def __init__(self, in_size: int, name: str = ""):
         super().__init__(in_size, batch_norm=nn.BatchNorm2d, name=name)
 
+class _BNBaseModule(nn.Module):
+    def __init__(self, in_size, batch_norm=None, name=""):
+        super().__init__()
+        self.net = nn.Sequential()
+        self.net.add_module(name + "bn", batch_norm(in_size))
+        nn.init.constant_(self.net[0].weight, 1.0)
+        nn.init.constant_(self.net[0].bias, 0)
+    def forward(self, x):
+        return self.net(x)
+
+
+class BatchNorm2dModule(nn.Module):
+    def __init__(self, in_size: int, name: str = ""):
+        super().__init__()
+        self.net = _BNBaseModule(in_size, batch_norm=nn.BatchNorm2d, name=name)
+
+    def forward(self, x):
+        return self.net(x)
+
 
 class BatchNorm3d(_BNBase):
     def __init__(self, in_size: int, name: str = ""):
         super().__init__(in_size, batch_norm=nn.BatchNorm3d, name=name)
 
+
+class _ConvBaseModule(nn.Module):
+    def __init__(
+        self,
+        in_size,
+        out_size,
+        kernel_size,
+        stride,
+        padding,
+        activation,
+        bn,
+        init,
+        conv=None,
+        batch_norm=None,
+        bias=True,
+        preact=False,
+        name="",
+    ):
+        super().__init__()
+
+        self.net = nn.Sequential()
+        # bias = bias and (not bn)
+        conv_unit = conv(in_size, out_size, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
+        init(conv_unit.weight)
+        if bias:
+            nn.init.constant_(conv_unit.bias, 0)
+
+        if bn:
+            if not preact:
+                bn_unit = nn.BatchNorm2d(out_size)
+            else:
+                bn_unit = nn.BatchNorm2d(in_size)
+
+        if preact:
+            if bn:
+                self.net.add_module(name + "bn", bn_unit)
+
+            if activation is not None:
+                self.net.add_module(name + "activation", activation)
+
+        self.net.add_module(name + "conv", conv_unit)
+
+        if not preact:
+            if bn:
+                self.net.add_module(name + "bn", bn_unit)
+
+            if activation is not None:
+                self.net.add_module(name + "activation", activation)
+
+    def forward(self, x, ):
+        output = self.net(x)
+        return output
 
 class _ConvBase(nn.Sequential):
     def __init__(
@@ -168,6 +265,41 @@ class Conv2d(_ConvBase):
             preact=preact,
             name=name,
         )
+
+class Conv2dModule(nn.Module, ):
+    def __init__(
+        self,
+        in_size: int,
+        out_size: int,
+        *,
+        kernel_size: Tuple[int, int] = (1, 1),
+        stride: Tuple[int, int] = (1, 1),
+        padding: Tuple[int, int] = (0, 0),
+        activation=nn.ReLU(inplace=True),
+        bn: bool = False,
+        init=nn.init.kaiming_normal_,
+        bias: bool = True,
+        preact: bool = False,
+        name: str = ""
+    ):
+        super().__init__()
+        self.net = _ConvBaseModule(
+            in_size,
+            out_size,
+            kernel_size,
+            stride,
+            padding,
+            activation,
+            bn,
+            init,
+            conv=nn.Conv2d,
+            batch_norm=BatchNorm2dModule,
+            bias=bias,
+            preact=preact,
+            name=name,
+        )
+    def forward(self, x):
+        return self.net(x)
 
 
 class Conv3d(_ConvBase):

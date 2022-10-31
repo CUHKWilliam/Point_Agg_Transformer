@@ -8,15 +8,14 @@ import torch.optim as optim
 import util.utils as utils
 from checkpoint import align_and_update_state_dicts, checkpoint, strip_prefix_if_present
 from criterion import InstSetCriterion
-from datasets.scannetv2_inst_block import InstDataset
+from datasets.scannetv2_inst import InstDataset
 from model.geoformer.geoformer import GeoFormer
 from tensorboardX import SummaryWriter
 from util.config import cfg
 from util.dist import get_rank, is_primary
 from util.log import create_logger
 from util.utils_scheduler import adjust_learning_rate, cosine_lr_after_step
-from torch.nn.parallel import DistributedDataParallel
-import apex
+
 
 def init():
     os.makedirs(cfg.exp_path, exist_ok=True)
@@ -45,6 +44,8 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer, scaler):
     start_time = time.time()
     check_time = time.time()
 
+    if distributed:
+        train_loader.sampler.set_epoch(epoch)
     for iteration, batch_input in enumerate(train_loader):
         data_time.update(time.time() - check_time)
         torch.cuda.empty_cache()
@@ -59,25 +60,27 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer, scaler):
         for key in batch_input:
             if torch.is_tensor(batch_input[key]):
                 batch_input[key] = batch_input[key].to(net_device)
-        show_corr, vis_path = False, None
-        if iteration % 100 == 0 and (not distributed or get_rank() == 0):
-            show_corr = True
-            vis_path = os.path.join(cfg.output_path, "corr_{}".format(epoch), "iter_{}".format(iteration))
-            os.makedirs(vis_path, exist_ok=True)
+
         with torch.cuda.amp.autocast(enabled=False):
-            outputs, updated_batch_input = model(batch_input, epoch, show=show_corr, vis_path=vis_path)
-            if outputs is None:
-                continue
-            if epoch > cfg.prepare_epochs:
-                if "mask_predictions" in outputs and outputs["mask_predictions"] is None:
-                    continue
+<<<<<<< HEAD
+            outputs, updated_batch_input = model(batch_input, epoch, show=False, vis_path=None)
+
             if updated_batch_input is not None:
                 loss, loss_dict = criterion(outputs, updated_batch_input, epoch)
             else:
                 loss, loss_dict = criterion(outputs, batch_input, epoch)
+=======
+            outputs = model(batch_input, epoch)
+
+            if epoch > cfg.prepare_epochs and outputs["mask_predictions"] is None:
+                continue
+
+            loss, loss_dict = criterion(outputs, batch_input, epoch)
+>>>>>>> parent of 137b5c0 (v2)
 
         # backward
         optimizer.zero_grad()
+        torch.cuda.empty_cache()
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
@@ -100,7 +103,7 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer, scaler):
             # writer.add_scalar("Loss/"+k, v[0], iteration)
 
         if iteration % 10 == 0:
-            if epoch <= cfg.prepare_epochs or ("cls_loss" not in am_dict):
+            if epoch <= cfg.prepare_epochs:
                 logger.info(
                     "Epoch: {}/{}, iter: {}/{} | lr: {:.6f} | loss: {:.4f}({:.4f}) | Sem loss: {:.4f}({:.4f}) | Mem: {:.2f} | iter_t: {:.2f} | remain_t: {remain_time}\n".format(
                         epoch,
@@ -147,9 +150,8 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer, scaler):
                 #     iter_time.val, remain_time=remain_time))
 
     if epoch % cfg.save_freq == 0 or iteration == cfg.epochs:
-        if not distributed or get_rank() == 0:
-            checkpoint(model, optimizer, epoch, cfg.output_path, None, None)
-            checkpoint(model, optimizer, epoch, cfg.output_path, None, None, last=True)
+        checkpoint(model, optimizer, epoch, cfg.output_path, None, None)
+    checkpoint(model, optimizer, epoch, cfg.output_path, None, None, last=True)
 
     for k in am_dict.keys():
         writer.add_scalar(k + "_train", am_dict[k].avg, epoch)
@@ -161,8 +163,7 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer, scaler):
     )
     logger.info("=========================================")
 
-global distributed
-distributed = False
+
 def main():
     # if cfg.ngpus > 1:
     #     init_distributed(
@@ -175,17 +176,8 @@ def main():
 
     # if is_primary():
     init()
-    distributed = False
-    if "WORLD_SIZE" in os.environ:
-        distributed = int(os.environ["WORLD_SIZE"]) > 1
 
-    if distributed:
-        torch.cuda.set_device(cfg.local_rank)
-        torch.distributed.init_process_group(backend="nccl", init_method="env://")
-        cfg.gpus = torch.distributed.get_world_size()
-    else:
-        torch.cuda.set_device(0)
-
+    torch.cuda.set_device(0)
     np.random.seed(cfg.manual_seed + get_rank())
     torch.manual_seed(cfg.manual_seed + get_rank())
     torch.cuda.manual_seed_all(cfg.manual_seed + get_rank())
@@ -193,9 +185,10 @@ def main():
     # model
     logger.info("=> creating model ...")
     model = GeoFormer()
+<<<<<<< HEAD
     if distributed:
         # model = apex.parallel.convert_syncbn_model(model)
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = DistributedDataParallel(
             model.cuda(cfg.local_rank),
             device_ids=[cfg.local_rank],
@@ -203,6 +196,9 @@ def main():
         )
     else:
         model = model.cuda()
+=======
+    model = model.cuda(0)
+>>>>>>> parent of 137b5c0 (v2)
 
     # if is_primary():
     logger.info("# training parameters: {}".format(sum([x.nelement() for x in model.parameters() if x.requires_grad])))
@@ -255,7 +251,7 @@ def main():
             raise ValueError("=> no checkpoint found at '{}'".format(checkpoint_fn))
 
     dataset = InstDataset(split_set="train")
-    train_loader = dataset.trainLoader(distributed)
+    train_loader = dataset.trainLoader()
 
     # if is_primary():
     logger.info(f"Training classes: {dataset.SEMANTIC_LABELS}")

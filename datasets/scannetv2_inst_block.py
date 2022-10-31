@@ -38,9 +38,9 @@ class InstDataset(TorchDataset):
         with open(split_filenames, "r") as f:
             self.scan_names = f.read().splitlines()
 
-        all_file_names = os.listdir(os.path.join(self.data_root, self.dataset, "scenes/blocks_bs3_s3/data"))
+        all_file_names = os.listdir(os.path.join(self.data_root, self.dataset, "scenes/blocks_bs3_s3/data2"))
         self.file_names = [
-            os.path.join(self.data_root, self.dataset, "scenes/blocks_bs3_s3/data", f)
+            os.path.join(self.data_root, self.dataset, "scenes/blocks_bs3_s3/data2", f)
             for f in all_file_names
             if f.split(".")[0][:12] in self.scan_names
         ]

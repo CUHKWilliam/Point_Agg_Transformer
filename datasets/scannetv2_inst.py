@@ -17,7 +17,6 @@ import torch
 from lib.pointgroup_ops.functions import pointgroup_ops
 from torch.utils.data import DataLoader
 from util.config import cfg
-from torch.utils.data.distributed import DistributedSampler
 
 from .scannetv2 import FOLD
 
@@ -232,30 +231,19 @@ class InstDataset(TorchDataset):
             j += 1
         return instance_label
 
-    def trainLoader(self, dist=False):
+    def trainLoader(self):
 
         train_set = list(range(len(self.file_names)))
-        if not dist:
-            dataloader = DataLoader(
-                train_set,
-                batch_size=self.batch_size,
-                num_workers=cfg.num_workers,
-                drop_last=True,
-                pin_memory=True,
-                sampler=None,
-                shuffle=True,
-                collate_fn=self.trainMerge,
-            )
-        else:
-            dataloader = DataLoader(
-                train_set,
-                batch_size=self.batch_size,
-                num_workers=cfg.num_workers,
-                drop_last=True,
-                pin_memory=True,
-                sampler=DistributedSampler(train_set, shuffle=True),
-                collate_fn=self.trainMerge,
-            )
+        dataloader = DataLoader(
+            train_set,
+            batch_size=self.batch_size,
+            num_workers=cfg.num_workers,
+            drop_last=True,
+            pin_memory=True,
+            sampler=None,
+            shuffle=True,
+            collate_fn=self.trainMerge,
+        )
         return dataloader
 
     def testLoader(self):

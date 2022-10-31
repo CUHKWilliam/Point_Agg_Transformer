@@ -195,7 +195,8 @@ class PointnetSAModuleVotesSeparate(nn.Module):
         mlp_spec = mlp
         if use_xyz and len(mlp_spec) > 0:
             mlp_spec[0] += 3
-        self.mlp_module = pt_utils.SharedMLP(mlp_spec, bn=bn)
+
+        self.mlp_module = pt_utils.SharedMLPModule(mlp_spec, bn=bn)
 
     def group_points(self, xyz, features, inds=None, npoint_new=None):
         temp = self.npoint
@@ -227,7 +228,6 @@ class PointnetSAModuleVotesSeparate(nn.Module):
 
     def mlp(self, grouped_features, grouped_xyz, pooling=None):
         new_features = self.mlp_module(grouped_features)  # (B, mlp[-1], npoint, nsample)
-
         if pooling is None:
             pooling = self.pooling
 
@@ -244,6 +244,7 @@ class PointnetSAModuleVotesSeparate(nn.Module):
             new_features = torch.sum(new_features * rbf.unsqueeze(1), -1, keepdim=True) / float(
                 self.nsample
             )  # (B, mlp[-1], npoint, 1)
+
         new_features = new_features.squeeze(-1)  # (B, mlp[-1], npoint)
 
         return new_features

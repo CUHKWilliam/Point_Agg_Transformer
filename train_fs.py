@@ -20,7 +20,6 @@ from util.dataloader_util import get_rank
 from util.log import create_logger
 from util.utils_scheduler import adjust_learning_rate
 from torch.nn.parallel import DistributedDataParallel
-import apex
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -71,14 +70,15 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer):
             if torch.is_tensor(query_dict[key]):
                 query_dict[key] = query_dict[key].to(net_device)
 
-        show_corr, corr_save_path = False, None
+        show, vis_path = False, None
         if iteration % 50 == 0:
-            show_corr = True
-            corr_save_path = os.path.join(cfg.output_path, "corr_{}".format(epoch), "iter_{}".format(iteration))
-            os.makedirs(corr_save_path, exist_ok=True)
-        outputs = model(support_dict, query_dict, remember=False, training=True, show_corr=show_corr,
-                        corr_save_path=corr_save_path)
-
+            show = True
+            vis_path = os.path.join(cfg.output_path, "corr_{}".format(epoch), "iter_{}".format(iteration))
+            os.makedirs(vis_path, exist_ok=True)
+        outputs = model(support_dict, query_dict, remember=False, training=True, show=show,
+                        vis_path=vis_path)
+        if outputs is None:
+            continue
         if "mask_predictions" not in outputs.keys() or outputs["mask_predictions"] is None:
             continue
 
@@ -184,8 +184,8 @@ if __name__ == "__main__":
         torch.cuda.set_device(cfg.local_rank)
         torch.distributed.init_process_group(backend="nccl", init_method="env://")
         cfg.gpus = torch.distributed.get_world_size()
-    else:
-        torch.cuda.set_device(0)
+
+    torch.cuda.set_device(0)
     np.random.seed(cfg.manual_seed + get_rank())
     torch.manual_seed(cfg.manual_seed + get_rank())
     torch.cuda.manual_seed_all(cfg.manual_seed + get_rank())
@@ -194,17 +194,7 @@ if __name__ == "__main__":
     logger.info("=> creating model ...")
 
     model = GeoFormerFS()
-
-    if distributed:
-        model = apex.parallel.convert_syncbn_model(model)
-        model = DistributedDataParallel(
-            model.cuda(cfg.local_rank),
-            device_ids=[cfg.local_rank],
-            output_device=cfg.local_rank,
-            find_unused_parameters=True,
-        )
-    else:
-        model = model.cuda()
+    model = model.cuda()
 
     logger.info("# training parameters: {}".format(sum([x.nelement() for x in model.parameters() if x.requires_grad])))
 
@@ -256,6 +246,13 @@ if __name__ == "__main__":
     if start_epoch == -1:
         start_epoch = 1
 
+    if distributed:
+        model = DistributedDataParallel(
+            model.cuda(cfg.local_rank),
+            device_ids=[cfg.local_rank],
+            output_device=cfg.local_rank,
+            find_unused_parameters=True,
+        )
 
 
     for epoch in range(start_epoch, cfg.epochs + 1):
